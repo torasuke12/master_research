@@ -33,7 +33,6 @@ class Crater:
     radius: float
     depth: float
     rim_height: float
-    rim_width: float
 
 
 @dataclass(frozen=True)
@@ -92,8 +91,7 @@ def crater_from_ddr(x: float, y: float, radius: float, ddr: float, rim_ratio: fl
         y=y,
         radius=radius,
         depth=ddr * diameter,
-        true_radiu=rim_ratio * diameter,
-        rim_width=0.12 * radius,
+        rim_height=rim_ratio * diameter,
     )
 
 
@@ -106,15 +104,9 @@ def terrain_height(x: np.ndarray, y: np.ndarray, craters: Iterable[Crater], rock
         dx = x - crater.x
         dy = y - crater.y
         rho = np.sqrt(dx * dx + dy * dy)
-        inside = rho <= crater.radius - crater.rim_width
-        rim = (rho > crater.radius - crater.rim_width) & (rho <= crater.radius + crater.rim_width)
-
-        crater_z = ((rho * rho) * (crater.depth - crater.rim_height) / (crater.radius - crater.rim_width) ** 2) - (
-            crater.depth - crater.rim_height
-        )
-        rim_z = crater.rim_height - (crater.rim_height / crater.rim_width**2) * (rho - crater.radius) ** 2
+        inside = rho <= crater.radius
+        crater_z = (rho * rho) * (crater.depth + crater.rim_height) / crater.radius**2 - crater.depth
         z = np.where(inside, np.minimum(z, crater_z), z)
-        z = np.where(rim, np.maximum(z, rim_z), z)
 
     for rock in rocks:
         dx = x - rock.x
@@ -288,7 +280,7 @@ def identify_craters(
     detected = 0
     cr_values = []
     for crater in craters:
-        true_radius = max(0.0, crater.radius - crater.rim_width)
+        true_radius = crater.radius
         best_cr = 0.0
         for cx, cy, radius in detections:
             dist = math.hypot(cx - crater.x, cy - crater.y)

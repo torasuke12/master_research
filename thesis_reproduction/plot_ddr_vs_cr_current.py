@@ -24,12 +24,11 @@ def angle_samples(fov_deg: float, resolution_deg: float) -> np.ndarray:
 
 def crater_height(x: np.ndarray | float, y: np.ndarray | float, diameter: float, ddr: float) -> np.ndarray | float:
     radius = diameter / 2.0
-    rim_width = max(0.12 * radius, 0.12)
     depth = ddr * diameter
     rho = np.hypot(x, y)
-    inside = rho <= radius - rim_width
+    inside = rho <= radius
     z = np.zeros_like(rho, dtype=float) if isinstance(rho, np.ndarray) else 0.0
-    crater_z = (rho * rho) * depth / (radius - rim_width) ** 2 - depth
+    crater_z = (rho * rho) * depth / radius**2 - depth
     return np.where(inside, crater_z, z) if isinstance(rho, np.ndarray) else (float(crater_z) if inside else 0.0)
 
 

@@ -427,12 +427,8 @@
       return p.diameter / 2;
     }
 
-    function craterRimWidth(p) {
-      return Math.max(0.12 * craterRadius(p), 0.12);
-    }
-
     function trueCraterRadius(p) {
-      return Math.max(0, craterRadius(p) - craterRimWidth(p));
+      return craterRadius(p);
     }
 
     function sensorPose(p) {
@@ -570,14 +566,10 @@
 
     function craterHeight(x, y, p) {
       const radius = craterRadius(p);
-      const rimWidth = craterRimWidth(p);
       const rimHeight = rimHeightRatioFromDdr(p.depth / p.diameter) * p.diameter;
       const rho = Math.hypot(x, y);
-      if (rho <= radius - rimWidth) {
-        return (rho * rho) * (p.depth - rimHeight) / ((radius - rimWidth) ** 2) - (p.depth - rimHeight);
-      }
-      if (rho <= radius + rimWidth) {
-        return rimHeight - (rimHeight / (rimWidth ** 2)) * ((rho - radius) ** 2);
+      if (rho <= radius) {
+        return (rho * rho) * (p.depth + rimHeight) / (radius ** 2) - p.depth;
       }
       return 0;
     }
