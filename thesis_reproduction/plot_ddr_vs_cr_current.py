@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,28 +35,34 @@ def crater_height(x: np.ndarray | float, y: np.ndarray | float, diameter: float,
 
 def ray_ground_hit(diameter: float, ddr: float, sensor: tuple[float, float, float], h: float, v: float, max_range: float) -> float | None:
     sx, sy, sz = sensor
-    step = 0.12
-    previous = 0.5
-    r = previous
-    while r <= max_range:
-        x = sx + r * math.cos(v) * math.sin(h)
-        y = sy + r * math.cos(v) * math.cos(h)
-        z = sz + r * math.sin(v)
-        if z <= crater_height(x, y, diameter, ddr):
-            lo, hi = previous, r
-            for _ in range(8):
-                mid = (lo + hi) / 2.0
-                mx = sx + mid * math.cos(v) * math.sin(h)
-                my = sy + mid * math.cos(v) * math.cos(h)
-                mz = sz + mid * math.sin(v)
-                if mz <= crater_height(mx, my, diameter, ddr):
-                    hi = mid
-                else:
-                    lo = mid
-            return hi
-        previous = r
-        r += step
-    return None
+    radius = diameter / 2.0
+    depth = ddr * diameter
+    dx = math.cos(v) * math.sin(h)
+    dy = math.cos(v) * math.cos(h)
+    dz = math.sin(v)
+    candidates = []
+
+    if dz < 0.0:
+        ground_range = -sz / dz
+        gx = sx + ground_range * dx
+        gy = sy + ground_range * dy
+        if 0.5 <= ground_range <= max_range and math.hypot(gx, gy) >= radius:
+            candidates.append(ground_range)
+
+    curvature = depth / radius**2
+    a = curvature * (dx * dx + dy * dy)
+    b = 2.0 * curvature * (sx * dx + sy * dy) - dz
+    c = curvature * (sx * sx + sy * sy) - depth - sz
+    discriminant = b * b - 4.0 * a * c
+    if discriminant >= 0.0:
+        root = math.sqrt(discriminant)
+        for crater_range in ((-b - root) / (2.0 * a), (-b + root) / (2.0 * a)):
+            cx = sx + crater_range * dx
+            cy = sy + crater_range * dy
+            if 0.5 <= crater_range <= max_range and math.hypot(cx, cy) <= radius:
+                candidates.append(crater_range)
+
+    return min(candidates) if candidates else None
 
 
 def simulate_lidar(
@@ -168,32 +175,52 @@ def ransac_circle(points: np.ndarray, diameter: float, range_noise: float, rng: 
     min_radius = max(0.7, diameter * 0.18)
     max_radius = max(3.0, diameter * 1.25)
     iterations = min(900, max(180, len(points) * len(points) * 2))
+    sample_indices = np.asarray([rng.choice(len(points), size=3, replace=False) for _ in range(iterations)])
+    samples = points[sample_indices]
+    x1, y1 = samples[:, 0, 0], samples[:, 0, 1]
+    x2, y2 = samples[:, 1, 0], samples[:, 1, 1]
+    x3, y3 = samples[:, 2, 0], samples[:, 2, 1]
+    det = 2.0 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2))
+    valid = np.abs(det) >= 1e-8
+    a = x1 * x1 + y1 * y1
+    b = x2 * x2 + y2 * y2
+    c = x3 * x3 + y3 * y3
+    cx = np.zeros(iterations)
+    cy = np.zeros(iterations)
+    cx[valid] = (a[valid] * (y2[valid] - y3[valid]) + b[valid] * (y3[valid] - y1[valid]) + c[valid] * (y1[valid] - y2[valid])) / det[valid]
+    cy[valid] = (a[valid] * (x3[valid] - x2[valid]) + b[valid] * (x1[valid] - x3[valid]) + c[valid] * (x2[valid] - x1[valid])) / det[valid]
+    radii = np.hypot(x1 - cx, y1 - cy)
+    valid &= (radii >= min_radius) & (radii <= max_radius)
+    valid_indices = np.flatnonzero(valid)
+    if len(valid_indices) == 0:
+        return None
+    models = np.column_stack([cx[valid_indices], cy[valid_indices], radii[valid_indices]])
+    residuals = np.abs(np.linalg.norm(points[None, :, :] - models[:, None, :2], axis=2) - models[:, 2, None])
+    inlier_matrix = residuals <= residual_threshold
+    inlier_counts = inlier_matrix.sum(axis=1)
+    candidate_indices = np.flatnonzero(inlier_counts >= 4)
+    if len(candidate_indices) == 0:
+        return None
+
+    mean_residuals = (residuals * inlier_matrix).sum(axis=1) / np.maximum(inlier_counts, 1)
+    base_scores = inlier_counts * 20.0 - mean_residuals * 100.0
+    candidate_indices = candidate_indices[np.argsort(-base_scores[candidate_indices], kind="stable")]
+    best_score = -math.inf
     best_model = None
     best_inliers = None
-    best_score = -math.inf
-
-    for _ in range(iterations):
-        sample = points[rng.choice(len(points), size=3, replace=False)]
-        model = circle_from_3_points(sample)
-        if model is None:
-            continue
-        cx, cy, radius = model
-        if radius < min_radius or radius > max_radius:
-            continue
-        residual = np.abs(np.linalg.norm(points - np.array([cx, cy]), axis=1) - radius)
-        inliers = residual <= residual_threshold
-        if inliers.sum() < 4:
-            continue
-        mean_residual = float(residual[inliers].mean())
+    for candidate_index in candidate_indices:
+        if base_scores[candidate_index] + 16.0 * math.pi <= best_score:
+            break
+        model = tuple(float(value) for value in models[candidate_index])
+        inliers = inlier_matrix[candidate_index]
         span = angular_span(points[inliers], model)
-        score = int(inliers.sum()) * 20.0 + span * 8.0 - mean_residual * 100.0
+        score = float(base_scores[candidate_index] + span * 8.0)
         if score > best_score:
             best_score = score
             best_model = model
             best_inliers = inliers
 
-    if best_model is None or best_inliers is None:
-        return None
+    assert best_model is not None and best_inliers is not None
     refined = least_squares_circle(points[best_inliers])
     if refined is None:
         return best_model
@@ -237,6 +264,23 @@ def detect_and_compute_cr(points: np.ndarray, diameter: float, range_noise: floa
     dist = math.hypot(cx, cy)
     cr = circle_intersection_area(true_radius, radius, dist) / (math.pi * true_radius * true_radius)
     return 1.0, float(cr), len(negative)
+
+
+def run_trial(task: tuple[float, float, float, float, float, float, float, float, int]) -> tuple[float, float, int]:
+    diameter, ddr, front_rim_distance, sensor_height, horizontal_fov, vertical_fov, angular_resolution, range_noise, seed = task
+    rng = np.random.default_rng(seed)
+    points = simulate_lidar(
+        diameter=diameter,
+        ddr=ddr,
+        front_rim_distance=front_rim_distance,
+        sensor_height=sensor_height,
+        horizontal_fov=horizontal_fov,
+        vertical_fov=vertical_fov,
+        angular_resolution=angular_resolution,
+        range_noise=range_noise,
+        rng=rng,
+    )
+    return detect_and_compute_cr(points, diameter, range_noise, rng)
 
 
 def value_label(value: float) -> str:
@@ -312,6 +356,7 @@ def main() -> None:
     parser.add_argument("--angular-resolution", type=float, default=1.0)
     parser.add_argument("--range-noise", type=float, default=0.02)
     parser.add_argument("--trials", type=int, default=10)
+    parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--completion-diameter", type=float, default=10.0)
     parser.add_argument("--completion-ddrs", type=float, nargs="+", default=[0.05, 0.25])
@@ -322,72 +367,75 @@ def main() -> None:
     ddr_values = np.arange(0.05, 0.501, 0.01)
     front_rim_distances = [args.front_rim_distance] if args.front_rim_distance is not None else args.front_rim_distances
     written_paths = []
+    executor = ProcessPoolExecutor(max_workers=args.jobs) if args.jobs > 1 else None
 
-    for front_rim_distance in front_rim_distances:
-        rows = []
-        for diameter in args.diameters:
-            for ddr in ddr_values:
-                dps = []
-                crs = []
-                negatives = []
-                for trial in range(args.trials):
-                    rng = np.random.default_rng(
-                        args.seed
-                        + trial
-                        + int(round(ddr * 1000))
-                        + int(round(diameter * 100))
-                        + int(round(front_rim_distance * 10))
+    try:
+        for front_rim_distance in front_rim_distances:
+            rows = []
+            for diameter in args.diameters:
+                for ddr in ddr_values:
+                    tasks = [
+                        (
+                            float(diameter),
+                            float(ddr),
+                            float(front_rim_distance),
+                            float(args.sensor_height),
+                            float(args.horizontal_fov),
+                            float(args.vertical_fov),
+                            float(args.angular_resolution),
+                            float(args.range_noise),
+                            args.seed
+                            + trial
+                            + int(round(ddr * 1000))
+                            + int(round(diameter * 100))
+                            + int(round(front_rim_distance * 10)),
+                        )
+                        for trial in range(args.trials)
+                    ]
+                    results = list(executor.map(run_trial, tasks)) if executor is not None else [run_trial(task) for task in tasks]
+                    dps, crs, negatives = zip(*results)
+                    rows.append(
+                        {
+                            "front_rim_distance": float(front_rim_distance),
+                            "sensor_height": float(args.sensor_height),
+                            "diameter": float(diameter),
+                            "ddr": float(ddr),
+                            "dp": float(np.mean(dps)),
+                            "cr": float(np.mean(crs)),
+                            "negative_points": float(np.mean(negatives)),
+                        }
                     )
-                    points = simulate_lidar(
-                        diameter=diameter,
-                        ddr=float(ddr),
-                        front_rim_distance=front_rim_distance,
-                        sensor_height=args.sensor_height,
-                        horizontal_fov=args.horizontal_fov,
-                        vertical_fov=args.vertical_fov,
-                        angular_resolution=args.angular_resolution,
-                        range_noise=args.range_noise,
-                        rng=rng,
-                    )
-                    dp, cr, negative_count = detect_and_compute_cr(points, diameter, args.range_noise, rng)
-                    dps.append(dp)
-                    crs.append(cr)
-                    negatives.append(negative_count)
-                rows.append(
-                    {
-                        "front_rim_distance": float(front_rim_distance),
-                        "sensor_height": float(args.sensor_height),
-                        "diameter": float(diameter),
-                        "ddr": float(ddr),
-                        "dp": float(np.mean(dps)),
-                        "cr": float(np.mean(crs)),
-                        "negative_points": float(np.mean(negatives)),
-                    }
+
+            suffix = distance_label(front_rim_distance)
+            height_suffix = value_label(args.sensor_height)
+            csv_path = out_dir / f"ddr_vs_cr_current_sensor_h_{height_suffix}_front_rim_{suffix}.csv"
+            with csv_path.open("w", newline="") as fh:
+                writer = csv.DictWriter(
+                    fh,
+                    fieldnames=["front_rim_distance", "sensor_height", "diameter", "ddr", "dp", "cr", "negative_points"],
+                    lineterminator="\n",
                 )
+                writer.writeheader()
+                writer.writerows(rows)
 
-        suffix = distance_label(front_rim_distance)
-        height_suffix = value_label(args.sensor_height)
-        csv_path = out_dir / f"ddr_vs_cr_current_sensor_h_{height_suffix}_front_rim_{suffix}.csv"
-        with csv_path.open("w", newline="") as fh:
-            writer = csv.DictWriter(fh, fieldnames=["front_rim_distance", "sensor_height", "diameter", "ddr", "dp", "cr", "negative_points"])
-            writer.writeheader()
-            writer.writerows(rows)
-
-        fig, ax = plt.subplots(figsize=(6, 4))
-        for diameter in args.diameters:
-            group = [row for row in rows if row["diameter"] == float(diameter)]
-            ax.plot([row["ddr"] for row in group], [row["cr"] for row in group], "o-", label=f"D={diameter:g} m")
-        ax.set_xlabel("Depth to diameter ratio (DDR)")
-        ax.set_ylabel("Completion rate (CR)")
-        ax.set_ylim(-0.05, 1.05)
-        ax.set_title(f"DDR vs CR, sensor height={args.sensor_height:g} m, front rim distance={front_rim_distance:g} m")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        png_path = out_dir / f"ddr_vs_cr_current_sensor_h_{height_suffix}_front_rim_{suffix}.png"
-        fig.savefig(png_path, dpi=180)
-        plt.close(fig)
-        written_paths.extend([png_path, csv_path])
+            fig, ax = plt.subplots(figsize=(6, 4))
+            for diameter in args.diameters:
+                group = [row for row in rows if row["diameter"] == float(diameter)]
+                ax.plot([row["ddr"] for row in group], [row["cr"] for row in group], "o-", label=f"D={diameter:g} m")
+            ax.set_xlabel("Depth to diameter ratio (DDR)")
+            ax.set_ylabel("Completion rate (CR)")
+            ax.set_ylim(-0.05, 1.05)
+            ax.set_title(f"DDR vs CR, sensor height={args.sensor_height:g} m, front rim distance={front_rim_distance:g} m")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            fig.tight_layout()
+            png_path = out_dir / f"ddr_vs_cr_current_sensor_h_{height_suffix}_front_rim_{suffix}.png"
+            fig.savefig(png_path, dpi=180)
+            plt.close(fig)
+            written_paths.extend([png_path, csv_path])
+    finally:
+        if executor is not None:
+            executor.shutdown()
 
     for completion_ddr in args.completion_ddrs:
         plot_crater_completion(
