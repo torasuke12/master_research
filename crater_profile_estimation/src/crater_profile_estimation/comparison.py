@@ -29,6 +29,7 @@ DEFAULT_PLOT = Path("output/synthterrain_estimation_comparison.png")
 DEFAULT_PROFILE_PLOT = Path(
     "output/synthterrain_estimation_profile_equal_scale.png"
 )
+DEFAULT_RIGHT_PLOT = Path("output/synthterrain_estimation_profile.png")
 DEFAULT_CSV = Path("output/synthterrain_estimation_comparison.csv")
 DEFAULT_SUMMARY = Path("output/synthterrain_estimation_comparison.json")
 
@@ -71,6 +72,7 @@ def compare(
     output_profile_plot: Path | None,
     output_csv: Path,
     output_summary: Path,
+    output_right_plot: Path | None = None,
 ) -> dict[str, object]:
     if not 1.0 <= diameter_m < 40.0:
         raise ValueError("comparison diameter must satisfy 1 <= D < 40 m")
@@ -188,6 +190,75 @@ def compare(
     fig.savefig(output_plot, dpi=180)
     plt.close(fig)
 
+    if output_right_plot is not None:
+        right_fig, right_ax = plt.subplots(
+            figsize=(8.4, 6.2), constrained_layout=True
+        )
+        right_ax.fill_between(
+            estimate_x,
+            q10,
+            q90,
+            color="#4C78A8",
+            alpha=0.24,
+            label="Estimated 10-90%",
+        )
+        right_ax.plot(
+            estimate_x,
+            q50,
+            color="#1F4E79",
+            linewidth=2.2,
+            label="Estimated median",
+        )
+        right_ax.plot(
+            true_x,
+            true_profile,
+            color="#E45756",
+            linewidth=2.0,
+            label="synthterrain profile",
+        )
+        right_ax.scatter(
+            x_m[slope_plot][:: max(1, slope_plot.sum() // 30)],
+            true_height[slope_plot][:: max(1, slope_plot.sum() // 30)],
+            s=10,
+            color="#E45756",
+            alpha=0.45,
+            label="Slope-fit samples",
+        )
+        right_ax.axhline(0.0, color="0.45", linewidth=1.0, linestyle="--")
+        right_ax.axvline(
+            -diameter_m / 2.0, color="0.65", linewidth=0.8, linestyle=":"
+        )
+        right_ax.axvline(
+            diameter_m / 2.0, color="0.65", linewidth=0.8, linestyle=":"
+        )
+        right_ax.set_title(
+            "Central Profile Comparison\n"
+            f"D = {diameter_m:g} m, measured S = {slope_deg:.2f} deg, "
+            f"sigma = {sigma_slope_deg:g} deg"
+        )
+        right_ax.set_xlabel("Distance from crater center (m)")
+        right_ax.set_ylabel("Elevation relative to surrounding surface (m)")
+        right_ax.grid(alpha=0.25)
+        right_ax.legend(loc="best")
+        right_ax.text(
+            0.02,
+            0.03,
+            (
+                f"true d/D = {true_dd:.3f}, estimated d/D = "
+                f"{estimate.current_dd_median:.3f}\n"
+                f"true kappa*t = {true_s_m2:.3g} m^2, estimated = "
+                f"{estimate.diffusion_amount_m2:.3g} m^2\n"
+                f"profile RMSE = {rmse_m:.3f} m"
+            ),
+            transform=right_ax.transAxes,
+            fontsize=9,
+            verticalalignment="bottom",
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.85},
+        )
+        output_right_plot.parent.mkdir(parents=True, exist_ok=True)
+        right_fig.savefig(output_right_plot, dpi=180)
+        plt.close(right_fig)
+
     if output_profile_plot is not None:
         profile_fig, (profile_ax, info_ax) = plt.subplots(
             1,
@@ -304,6 +375,9 @@ def compare(
         "equal_scale_profile_plot": (
             str(output_profile_plot) if output_profile_plot is not None else None
         ),
+        "right_profile_plot": (
+            str(output_right_plot) if output_right_plot is not None else None
+        ),
         "csv": str(output_csv),
     }
     output_summary.parent.mkdir(parents=True, exist_ok=True)
@@ -323,6 +397,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--profile-plot", type=Path, default=DEFAULT_PROFILE_PLOT
     )
+    result.add_argument("--right-plot", type=Path, default=DEFAULT_RIGHT_PLOT)
     result.add_argument("--output", type=Path, default=DEFAULT_CSV)
     result.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     return result
@@ -341,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         output_profile_plot=args.profile_plot,
         output_csv=args.output,
         output_summary=args.summary,
+        output_right_plot=args.right_plot,
     )
     print(json.dumps(summary, indent=2))
     return 0

@@ -1,0 +1,18 @@
+{
+  "diameter_input_m": 5,
+  "measured_slope_deg": 8.157804091041392,
+  "sigma_slope_deg": 2,
+  "slope_fit_radial_fraction": [
+    0.2,
+    0.9
+  ],
+  "synthterrain_initial_dd": 0.1,
+  "synthterrain_current_dd": 0.06129039692042347,
+  "synthterrain_diffusion_amount_m2": 0.375,
+  "synthterrain_age_years": 24193548.387096774,
+  "estimated_current_dd": 0.050088852643966675,
+  "estimated_diffusion_amount_m2": 0.55,
+  "profile_rmse_m": 0.026560224015032056,
+  "plot": "output/synthterrain_D5m_vs_estimated_without_pc.png",
+  "csv": "output/synthterrain_D5m_vs_estimated_without_pc.csv"
+}
