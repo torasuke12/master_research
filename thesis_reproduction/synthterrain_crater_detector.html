@@ -169,7 +169,7 @@
     .views {
       min-height: 0;
       display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+      grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
       gap: 14px;
     }
 
@@ -239,20 +239,12 @@
       cursor: grabbing;
     }
 
-    .stack {
-      min-height: 0;
-      display: grid;
-      grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 14px;
-    }
-
     @media (max-width: 980px) {
       body { overflow: auto; }
       .app { height: auto; min-height: 100vh; overflow: visible; }
       .app { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
-      .views { grid-template-columns: 1fr; }
-      .stack { grid-template-rows: minmax(260px, 1fr) minmax(260px, 1fr); }
+      .views { grid-template-rows: minmax(260px, 1fr) minmax(260px, 1fr); }
       .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
     }
   </style>
@@ -394,15 +386,9 @@
           <canvas id="topCanvas"></canvas>
         </div>
 
-        <div class="stack">
-          <div class="view">
-            <header><h2>横断面ビュー</h2></header>
-            <canvas id="profileCanvas"></canvas>
-          </div>
-          <div class="view">
-            <header><h2>疑似3D地形ビュー</h2></header>
-            <canvas id="surfaceCanvas"></canvas>
-          </div>
+        <div class="view">
+          <header><h2>横断面ビュー</h2></header>
+          <canvas id="profileCanvas"></canvas>
         </div>
       </section>
     </main>
@@ -450,22 +436,19 @@
 
     const canvases = {
       top: document.getElementById("topCanvas"),
-      profile: document.getElementById("profileCanvas"),
-      surface: document.getElementById("surfaceCanvas")
+      profile: document.getElementById("profileCanvas")
     };
 
     const defaultNegativePointThreshold = -0.10;
 
     const zoom = {
       top: 1,
-      profile: 1,
-      surface: 1
+      profile: 1
     };
 
     const pan = {
       top: { x: 0, y: 0 },
-      profile: { y: 0, z: 0 },
-      surface: { x: 0, y: 0 }
+      profile: { y: 0, z: 0 }
     };
 
     let drag = null;
@@ -1246,26 +1229,26 @@
       const baseYMax = halfField;
       const [xMin, xMax] = shiftRange(zoomedRange(baseXMin, baseXMax, zoom.top), pan.top.x);
       const [yMin, yMax] = shiftRange(zoomedRange(baseYMin, baseYMax, zoom.top), pan.top.y);
-      const sx = (width - margin * 2) / (xMax - xMin);
-      const sy = (height - margin * 2) / (yMax - yMin);
+      const sx = (width - margin * 2) / (yMax - yMin);
+      const sy = (height - margin * 2) / (xMax - xMin);
       const s = Math.min(sx, sy);
-      const tx = x => margin + (x - xMin) * s;
-      const ty = y => height - margin - (y - yMin) * s;
+      const tx = y => margin + (y - yMin) * s;
+      const ty = x => height - margin - (x - xMin) * s;
 
       ctx.clearRect(0, 0, width, height);
       const cell = Math.max(2, Math.floor(width / 130));
       for (let py = margin; py < height - margin; py += cell) {
         for (let px = margin; px < width - margin; px += cell) {
-          const x = xMin + (px - margin) / s;
-          const y = yMin + (height - margin - py) / s;
+          const y = yMin + (px - margin) / s;
+          const x = xMin + (height - margin - py) / s;
           ctx.fillStyle = colorForHeight(craterHeight(x, y, p), p);
           ctx.fillRect(px, py, cell + 1, cell + 1);
         }
       }
 
-      drawCartesianAxes(ctx, { width, height, margin, xMin, xMax, yMin, yMax }, tx, ty, {
-        x: "x position (m)",
-        y: "y position (m)"
+      drawCartesianAxes(ctx, { width, height, margin, xMin: yMin, xMax: yMax, yMin: xMin, yMax: xMax }, tx, ty, {
+        x: "y position (m)",
+        y: "x position (m)"
       });
       drawScaleBar(ctx, width, height, s);
 
@@ -1274,8 +1257,8 @@
       ctx.lineWidth = 1;
       for (const ray of topRays(p)) {
         ctx.beginPath();
-        ctx.moveTo(tx(sensor.x), ty(sensor.y));
-        ctx.lineTo(tx(ray.x), ty(ray.y));
+        ctx.moveTo(tx(sensor.y), ty(sensor.x));
+        ctx.lineTo(tx(ray.y), ty(ray.x));
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
@@ -1286,7 +1269,7 @@
         ctx.strokeStyle = "#000";
         ctx.lineWidth = crater === targetCrater ? 4 : 2;
         ctx.beginPath();
-        ctx.arc(tx(crater.x), ty(crater.y), crater.diameter / 2 * s, 0, Math.PI * 2);
+        ctx.arc(tx(crater.y), ty(crater.x), crater.diameter / 2 * s, 0, Math.PI * 2);
         ctx.stroke();
       }
 
@@ -1296,24 +1279,24 @@
         ctx.strokeStyle = "#ff0000";
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(tx(fit.cx), ty(fit.cy), fit.r * s, 0, Math.PI * 2);
+        ctx.arc(tx(fit.cy), ty(fit.cx), fit.r * s, 0, Math.PI * 2);
         ctx.stroke();
       }
 
       ctx.fillStyle = "#111";
       for (const pt of sim.points.filter(pt => pt.z < p.negativeThreshold)) {
         ctx.beginPath();
-        ctx.arc(tx(pt.x), ty(pt.y), 2.5, 0, Math.PI * 2);
+        ctx.arc(tx(pt.y), ty(pt.x), 2.5, 0, Math.PI * 2);
         ctx.fill();
       }
 
       ctx.fillStyle = "#1f5fbf";
       ctx.beginPath();
-      ctx.arc(tx(sensor.x), ty(sensor.y), 10, 0, Math.PI * 2);
+      ctx.arc(tx(sensor.y), ty(sensor.x), 10, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = "#202522";
       ctx.font = "600 30px system-ui";
-      ctx.fillText("sensor", tx(sensor.x) + 20, ty(sensor.y) - 20);
+      ctx.fillText("sensor", tx(sensor.y) + 20, ty(sensor.x) - 20);
     }
 
     function drawProfile(p, sim) {
@@ -1379,115 +1362,6 @@
       drawScaleBar(ctx, width, height, pixelsPerMeter);
     }
 
-    function drawSurface(p) {
-      const canvas = canvases.surface;
-      const { width, height } = resizeCanvas(canvas);
-      const ctx = canvas.getContext("2d");
-      const radius = craterRadius(p);
-      const span = p.fieldSize / zoom.surface;
-      const xMin = -span / 2 + pan.surface.x;
-      const xMax = span / 2 + pan.surface.x;
-      const yMin = -span / 2 + pan.surface.y;
-      const yMax = span / 2 + pan.surface.y;
-      const rows = 44;
-      const cols = 44;
-      const scale = Math.min(width / (span * 1.25), height / (span * 0.85));
-      const cx = width * 0.5;
-      const cy = height * 0.58;
-      const zScale = Math.max(18, scale * 2.2);
-
-      function project(x, y, z) {
-        const dx = x;
-        const dy = y;
-        return {
-          x: cx + (dx - dy) * 0.55 * scale,
-          y: cy + (dx + dy) * 0.28 * scale - z * zScale
-        };
-      }
-
-      ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = "#eef1e9";
-      ctx.fillRect(0, 0, width, height);
-
-      for (let j = rows - 1; j >= 0; j--) {
-        for (let i = 0; i < cols - 1; i++) {
-          const x1 = xMin + (xMax - xMin) * i / (cols - 1);
-          const y1 = yMin + (yMax - yMin) * j / (rows - 1);
-          const x2 = xMin + (xMax - xMin) * (i + 1) / (cols - 1);
-          const y2 = yMin + (yMax - yMin) * (j + 1) / (rows - 1);
-          const z11 = craterHeight(x1, y1, p);
-          const z21 = craterHeight(x2, y1, p);
-          const z22 = craterHeight(x2, y2, p);
-          const z12 = craterHeight(x1, y2, p);
-          const a = project(x1, y1, z11);
-          const b = project(x2, y1, z21);
-          const c = project(x2, y2, z22);
-          const d = project(x1, y2, z12);
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
-          ctx.lineTo(c.x, c.y);
-          ctx.lineTo(d.x, d.y);
-          ctx.closePath();
-          ctx.fillStyle = colorForHeight((z11 + z21 + z22 + z12) / 4, p);
-          ctx.fill();
-        }
-      }
-
-      ctx.strokeStyle = "rgba(32,37,34,0.25)";
-      ctx.lineWidth = 1;
-      for (const crater of craters) {
-        ctx.beginPath();
-        for (let i = 0; i <= 80; i++) {
-          const angle = i / 80 * Math.PI * 2;
-          const pt = project(crater.x + Math.cos(angle) * crater.diameter / 2, crater.y + Math.sin(angle) * crater.diameter / 2, 0.02);
-          if (i === 0) ctx.moveTo(pt.x, pt.y);
-          else ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.stroke();
-      }
-
-      const axisLength = niceStep(span * 0.35, 1);
-      const origin = project(0, 0, 0);
-      const xAxis = project(axisLength, 0, 0);
-      const yAxis = project(0, axisLength, 0);
-      const zAxis = project(0, 0, Math.max(1, axisLength * 0.25));
-
-      ctx.save();
-      ctx.lineWidth = 2;
-      ctx.font = "600 14px system-ui";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-
-      ctx.strokeStyle = "#b33a2b";
-      ctx.fillStyle = "#b33a2b";
-      ctx.beginPath();
-      ctx.moveTo(origin.x, origin.y);
-      ctx.lineTo(xAxis.x, xAxis.y);
-      ctx.stroke();
-      ctx.fillText(`x ${formatTick(axisLength, axisLength)} m`, xAxis.x + 24, xAxis.y);
-
-      ctx.strokeStyle = "#1f7a68";
-      ctx.fillStyle = "#1f7a68";
-      ctx.beginPath();
-      ctx.moveTo(origin.x, origin.y);
-      ctx.lineTo(yAxis.x, yAxis.y);
-      ctx.stroke();
-      ctx.fillText(`y ${formatTick(axisLength, axisLength)} m`, yAxis.x - 24, yAxis.y);
-
-      ctx.strokeStyle = "#1f5fbf";
-      ctx.fillStyle = "#1f5fbf";
-      ctx.beginPath();
-      ctx.moveTo(origin.x, origin.y);
-      ctx.lineTo(zAxis.x, zAxis.y);
-      ctx.stroke();
-      ctx.fillText("z", zAxis.x, zAxis.y - 12);
-      ctx.restore();
-
-      const barPixelsPerMeter = Math.hypot(project(1, 0, 0).x - origin.x, project(1, 0, 0).y - origin.y);
-      drawScaleBar(ctx, width, height, barPixelsPerMeter, "ground ");
-    }
-
     function update() {
       const p = params();
       outputs.fieldSize.textContent = `${p.fieldSize.toFixed(0)} m`;
@@ -1527,7 +1401,6 @@
 
       drawTop(p, sim, fit);
       drawProfile(p, sim);
-      drawSurface(p);
     }
 
     const generationControls = [controls.csfd, controls.fieldSize, controls.minDiameter, controls.maxDiameter, controls.seed, controls.maxCraterCount];
@@ -1598,8 +1471,8 @@
         const baseYMax = p.fieldSize / 2;
         const [xMin, xMax] = zoomedRange(baseXMin, baseXMax, zoom.top);
         const [yMin, yMax] = zoomedRange(baseYMin, baseYMax, zoom.top);
-        pan.top.x -= dx * (xMax - xMin) / drawableWidth;
-        pan.top.y += dy * (yMax - yMin) / drawableHeight;
+        pan.top.y -= dx * (yMax - yMin) / drawableWidth;
+        pan.top.x += dy * (xMax - xMin) / drawableHeight;
         return;
       }
 
@@ -1613,12 +1486,6 @@
         pan.profile.z += dy / profileRange.pixelsPerMeter;
         return;
       }
-
-      if (name === "surface") {
-        const span = p.fieldSize / zoom.surface;
-        pan.surface.x -= dx * span / drawableWidth;
-        pan.surface.y += dy * span / drawableHeight;
-      }
     }
 
     function selectCraterAtTopView(event) {
@@ -1627,8 +1494,8 @@
       const scale = window.devicePixelRatio || 1;
       const px = (event.clientX - rect.left) * scale;
       const py = (event.clientY - rect.top) * scale;
-      const worldX = topViewTransform.xMin + (px - topViewTransform.margin) / topViewTransform.s;
-      const worldY = topViewTransform.yMin + (canvases.top.height - topViewTransform.margin - py) / topViewTransform.s;
+      const worldY = topViewTransform.yMin + (px - topViewTransform.margin) / topViewTransform.s;
+      const worldX = topViewTransform.xMin + (canvases.top.height - topViewTransform.margin - py) / topViewTransform.s;
 
       let selected = null;
       let bestNormalizedDistance = Infinity;
@@ -1659,13 +1526,10 @@
     document.getElementById("generate").addEventListener("click", () => {
       zoom.top = 1;
       zoom.profile = 1;
-      zoom.surface = 1;
       pan.top.x = 0;
       pan.top.y = 0;
       pan.profile.y = 0;
       pan.profile.z = 0;
-      pan.surface.x = 0;
-      pan.surface.y = 0;
       generatePopulation(params());
       update();
     });
