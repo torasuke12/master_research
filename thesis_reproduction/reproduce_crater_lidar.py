@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial import cKDTree
 
-DEFAULT_NEGATIVE_OBSTACLE_THRESHOLD = -0.25
+DEFAULT_NEGATIVE_OBSTACLE_THRESHOLD = -0.20
 
 
 @dataclass(frozen=True)
@@ -403,26 +403,77 @@ def error_experiment(out_dir: Path, seed: int, negative_threshold: float) -> tup
     return range_rows, angle_rows
 
 
+def value_label(value: float) -> str:
+    return f"{value:g}m".replace(".", "p")
+
+
 def ddr_experiment(out_dir: Path, seed: int, negative_threshold: float) -> list[dict[str, float]]:
     rows = []
-    cfg = LidarConfig(horizontal_fov_deg=90.0, horizontal_pixels=128)
-    for ddr in [0.05, 0.10, 0.15, 0.20, 0.25]:
-        crs, dps = [], []
-        for trial in range(5):
-            dp, cr, _, _ = single_crater_trial(ddr=ddr, lidar=cfg, seed=seed + 3000 + trial, negative_threshold=negative_threshold)
-            crs.append(cr)
-            dps.append(dp)
-        rows.append({"ddr": ddr, "dp": float(np.mean(dps)), "cr": float(np.mean(crs))})
+    diameters = [5.0, 8.0, 10.0]
+    ddr_values = np.arange(0.05, 0.501, 0.01)
+    front_rim_distances = [15.0, 10.0, 5.0]
+    sensor_heights = [0.5, 1.0, 1.5]
+    trials = 3
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot([row["ddr"] for row in rows], [row["cr"] for row in rows], "o-")
-    ax.set_xlabel("Depth to diameter ratio (DDR)")
-    ax.set_ylabel("Completion rate")
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_title("CR vs crater DDR")
-    fig.tight_layout()
-    fig.savefig(out_dir / "cr_vs_ddr.png", dpi=160)
-    plt.close(fig)
+    for sensor_height in sensor_heights:
+        for front_rim_distance in front_rim_distances:
+            condition_rows = []
+            for diameter in diameters:
+                radius = diameter / 2.0
+                cfg = LidarConfig(
+                    origin=(0.0, 15.0 - radius - front_rim_distance, sensor_height),
+                    vertical_fov_deg=16.0,
+                    horizontal_fov_deg=54.0,
+                    vertical_pixels=17,
+                    horizontal_pixels=55,
+                    pitch_center_deg=math.degrees(math.atan2(-sensor_height, front_rim_distance + radius)),
+                    max_range=min(75.0, front_rim_distance + diameter * 2.0 + 8.0),
+                    range_sigma=0.02,
+                )
+                for ddr in ddr_values:
+                    crs, dps = [], []
+                    for trial in range(trials):
+                        dp, cr, _, _ = single_crater_trial(
+                            radius=radius,
+                            ddr=float(ddr),
+                            lidar=cfg,
+                            seed=seed
+                            + 3000
+                            + trial
+                            + int(round(sensor_height * 100))
+                            + int(round(diameter * 100))
+                            + int(round(ddr * 1000))
+                            + int(round(front_rim_distance * 10)),
+                            negative_threshold=negative_threshold,
+                        )
+                        crs.append(cr)
+                        dps.append(dp)
+                    row = {
+                        "front_rim_distance": front_rim_distance,
+                        "sensor_height": sensor_height,
+                        "diameter": diameter,
+                        "ddr": float(ddr),
+                        "dp": float(np.mean(dps)),
+                        "cr": float(np.mean(crs)),
+                    }
+                    rows.append(row)
+                    condition_rows.append(row)
+
+            height_suffix = value_label(sensor_height)
+            distance_suffix = value_label(front_rim_distance)
+            fig, ax = plt.subplots(figsize=(6, 4))
+            for diameter in diameters:
+                group = [row for row in condition_rows if row["diameter"] == diameter]
+                ax.plot([row["ddr"] for row in group], [row["cr"] for row in group], "o-", label=f"D={diameter:g} m")
+            ax.set_xlabel("Depth to diameter ratio (DDR)")
+            ax.set_ylabel("Completion rate")
+            ax.set_ylim(-0.05, 1.05)
+            ax.set_title(f"CR vs crater DDR, sensor height={sensor_height:g} m, front rim distance={front_rim_distance:g} m")
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            fig.tight_layout()
+            fig.savefig(out_dir / f"cr_vs_ddr_sensor_h_{height_suffix}_front_rim_{distance_suffix}.png", dpi=160)
+            plt.close(fig)
     return rows
 
 
