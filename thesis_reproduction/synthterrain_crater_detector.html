@@ -224,7 +224,14 @@
     .actual::before { background: #000; }
     .fit::before { background: var(--fit); }
     .ray::before { background: var(--lidar); }
+    .point::before,
+    .inlier::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
     .point::before { background: #111; }
+    .inlier::before { background: #ff0000; }
 
     canvas {
       width: 100%;
@@ -379,6 +386,7 @@
             <div class="legend">
               <span class="swatch ray">LiDAR</span>
               <span class="swatch point">点群</span>
+              <span class="swatch inlier">インライア点</span>
               <span class="swatch actual">真の円</span>
               <span class="swatch fit">補完円</span>
             </div>
