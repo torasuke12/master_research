@@ -1363,7 +1363,7 @@
       for (const pt of sim.points.filter(pt => pt.profileBeam && pt.z < p.negativeThreshold)) {
         ctx.fillStyle = inliers.has(pt) ? "#ff0000" : "#111";
         ctx.beginPath();
-        ctx.arc(tx(pt.y), ty(pt.z), 2.5, 0, Math.PI * 2);
+        ctx.arc(tx(pt.y), ty(pt.z), 5, 0, Math.PI * 2);
         ctx.fill();
       }
 
