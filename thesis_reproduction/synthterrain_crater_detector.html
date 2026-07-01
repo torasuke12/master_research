@@ -382,8 +382,10 @@
         <div class="metric"><span>検出判定 DP</span><strong id="dp">0%</strong></div>
         <div class="metric"><span>補完率 CR</span><strong id="cr">0%</strong></div>
         <div class="metric"><span>補完直径</span><strong id="fitDiameter">0 m</strong></div>
-        <div class="metric"><span>対象クレーター 劣化後D / d/D</span><strong id="ddr">-</strong></div>
+        <div class="metric"><span>劣化後D / d/D(生成D基準)</span><strong id="ddr">-</strong></div>
         <div class="metric"><span>対象年代</span><strong id="rimHeight">-</strong></div>
+        <div class="metric"><span>対象最大傾斜角</span><strong id="maxSlope">-</strong></div>
+        <div class="metric"><span>対象平均傾斜角</span><strong id="meanSlope">-</strong></div>
         <div class="metric"><span>総拡散ステップ</span><strong id="diffusionSteps">0</strong></div>
       </section>
 
@@ -449,6 +451,8 @@
       fitDiameter: document.getElementById("fitDiameter"),
       rimHeight: document.getElementById("rimHeight"),
       ddr: document.getElementById("ddr"),
+      maxSlope: document.getElementById("maxSlope"),
+      meanSlope: document.getElementById("meanSlope"),
       diffusionSteps: document.getElementById("diffusionSteps")
     };
 
@@ -518,6 +522,20 @@
     function csfdValue(name, diameter) {
       if (name === "Trask") return 10 ** -1.1 * diameter ** -2;
       return (diameter <= 80 ? 29174 * diameter ** -1.92 : 156228 * diameter ** -2.389) / 1e6;
+    }
+
+    const synthterrainReferenceArea = 1000 * 1000;
+
+    function scaledCsfdCount(name, area, diameter) {
+      const areaRatio = area / synthterrainReferenceArea;
+      const referenceCount = csfdValue(name, diameter) * synthterrainReferenceArea;
+      return Math.floor(referenceCount * areaRatio);
+    }
+
+    function scaledExpectedCount(name, area, minD, maxD) {
+      const areaRatio = area / synthterrainReferenceArea;
+      const referenceExpected = Math.max(0, csfdValue(name, minD) - csfdValue(name, maxD)) * synthterrainReferenceArea;
+      return referenceExpected * areaRatio;
     }
 
     const npfCoef = [-3.076756, -3.557528, 0.781027, 1.021521, -0.156012, -0.444058, 0.019977, 0.086850, -0.005874, -0.006809, 8.25e-4, 5.54e-5];
@@ -660,6 +678,28 @@
       return { values, n, min, max, steps, diameter };
     }
 
+    function surfaceSlopeStats(surface) {
+      const spacing = 4 * surface.diameter / (surface.n - 1);
+      let maxSlope = 0;
+      let sumSlope = 0;
+      let count = 0;
+      for (let row = 1; row < surface.n - 1; row++) {
+        for (let col = 1; col < surface.n - 1; col++) {
+          const i = row * surface.n + col;
+          const dzdx = (surface.values[i + 1] - surface.values[i - 1]) / (2 * spacing);
+          const dzdy = (surface.values[i + surface.n] - surface.values[i - surface.n]) / (2 * spacing);
+          const slope = Math.atan(Math.hypot(dzdx, dzdy)) * 180 / Math.PI;
+          maxSlope = Math.max(maxSlope, slope);
+          sumSlope += slope;
+          count++;
+        }
+      }
+      return {
+        max: maxSlope,
+        mean: count ? sumSlope / count : 0
+      };
+    }
+
     function localSurfaceHeight(surface, x, y) {
       const fx = (x / surface.diameter + 2) * (surface.n - 1) / 4;
       const fy = (y / surface.diameter + 2) * (surface.n - 1) / 4;
@@ -705,7 +745,8 @@
     function rebuildCraterSurface(crater) {
       crater.surface = buildCraterSurface(crater);
       crater.degradedDiameter = degradedCraterDiameter(crater.surface);
-      crater.currentDD = (crater.surface.max - crater.surface.min) / crater.degradedDiameter;
+      crater.currentDD = (crater.surface.max - crater.surface.min) / crater.diameter;
+      crater.slopeStats = surfaceSlopeStats(crater.surface);
     }
 
     function refreshTerrainStats(p) {
@@ -746,9 +787,9 @@
       const minD = Math.min(p.minDiameter, p.maxDiameter - 0.1);
       const maxD = Math.max(p.maxDiameter, minD + 0.1);
       const area = p.fieldSize ** 2;
-      const countAtMin = Math.floor(area * csfdValue(p.csfd, minD));
-      const countAtMax = Math.floor(area * csfdValue(p.csfd, maxD));
-      const expected = area * Math.max(0, csfdValue(p.csfd, minD) - csfdValue(p.csfd, maxD));
+      const countAtMin = scaledCsfdCount(p.csfd, area, minD);
+      const countAtMax = scaledCsfdCount(p.csfd, area, maxD);
+      const expected = scaledExpectedCount(p.csfd, area, minD, maxD);
       const csfdCount = Math.max(0, countAtMin - countAtMax);
       const count = Math.min(csfdCount, p.maxCraterCount);
       craters = [];
@@ -1449,6 +1490,8 @@
       outputs.craterCount.textContent = terrain ? `${craters.length} / CSFD ${terrain.csfdCount}` : "0";
       outputs.ddr.textContent = targetCrater ? `${targetCrater.degradedDiameter.toFixed(1)} m / ${targetCrater.currentDD.toFixed(3)}` : "-";
       outputs.rimHeight.textContent = targetCrater ? `${(targetCrater.ageYears / 1e6).toFixed(0)} Myr` : "-";
+      outputs.maxSlope.textContent = targetCrater ? `${targetCrater.slopeStats.max.toFixed(1)}°` : "-";
+      outputs.meanSlope.textContent = targetCrater ? `${targetCrater.slopeStats.mean.toFixed(1)}°` : "-";
       outputs.diffusionSteps.textContent = terrain ? terrain.steps.toLocaleString("ja-JP") : "0";
 
       if (!terrain || !targetCrater) return;
