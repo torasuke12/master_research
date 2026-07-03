@@ -373,7 +373,15 @@
           <label for="negativeThreshold">負の障害物閾値</label>
           <output id="negativeThresholdValue"></output>
         </div>
-        <input id="negativeThreshold" type="range" min="-1" max="0" step="0.01" value="-0.10">
+        <input id="negativeThreshold" type="range" min="-1" max="-0.01" step="0.01" value="-0.10">
+      </div>
+
+      <div class="control">
+        <div class="label-row">
+          <label for="rimThreshold">リム点抽出閾値</label>
+          <output id="rimThresholdValue"></output>
+        </div>
+        <input id="rimThreshold" type="range" min="0.01" max="1" step="0.01" value="0.01">
       </div>
 
       <div class="buttons">
@@ -387,6 +395,7 @@
       <section class="metrics">
         <div class="metric"><span>生成クレーター数</span><strong id="craterCount">0</strong></div>
         <div class="metric"><span>負標高点数</span><strong id="pointCount">0</strong></div>
+        <div class="metric"><span>リム点数</span><strong id="rimPointCount">0</strong></div>
         <div class="metric"><span>検出判定 DP</span><strong id="dp">0%</strong></div>
         <div class="metric"><span>補完率 CR</span><strong id="cr">0%</strong></div>
         <div class="metric"><span>補完直径</span><strong id="fitDiameter">0 m</strong></div>
@@ -436,7 +445,8 @@
       horizontalFov: document.getElementById("horizontalFov"),
       verticalFov: document.getElementById("verticalFov"),
       angularResolution: document.getElementById("angularResolution"),
-      negativeThreshold: document.getElementById("negativeThreshold")
+      negativeThreshold: document.getElementById("negativeThreshold"),
+      rimThreshold: document.getElementById("rimThreshold")
     };
 
     const outputs = {
@@ -454,8 +464,10 @@
       verticalFov: document.getElementById("verticalFovValue"),
       angularResolution: document.getElementById("angularResolutionValue"),
       negativeThreshold: document.getElementById("negativeThresholdValue"),
+      rimThreshold: document.getElementById("rimThresholdValue"),
       craterCount: document.getElementById("craterCount"),
       pointCount: document.getElementById("pointCount"),
+      rimPointCount: document.getElementById("rimPointCount"),
       dp: document.getElementById("dp"),
       cr: document.getElementById("cr"),
       fitDiameter: document.getElementById("fitDiameter"),
@@ -503,7 +515,8 @@
         horizontalFov: Number(controls.horizontalFov.value),
         verticalFov: Number(controls.verticalFov.value),
         angularResolution: Number(controls.angularResolution.value),
-        negativeThreshold: Number(controls.negativeThreshold.value)
+        negativeThreshold: Number(controls.negativeThreshold.value),
+        rimThreshold: Number(controls.rimThreshold.value)
       };
     }
 
@@ -804,6 +817,13 @@
       outputs.targetDiameter.textContent = `${formatTick(targetCrater.diameter, 0.5)} m`;
     }
 
+    function syncRimThresholdControl() {
+      controls.rimThreshold.max = "1";
+      if (Number(controls.rimThreshold.value) < 0.01) {
+        controls.rimThreshold.value = "0.01";
+      }
+    }
+
     function setTargetDiameter(diameter, p) {
       if (!targetCrater) return;
       targetCrater.diameter = diameter;
@@ -814,6 +834,7 @@
       refreshTerrainStats(p);
       syncTargetAgeControl();
       syncTargetDiameterControl();
+      syncRimThresholdControl();
     }
 
     function generatePopulation(p) {
@@ -858,6 +879,7 @@
       refreshTerrainStats(p);
       syncTargetAgeControl();
       syncTargetDiameterControl();
+      syncRimThresholdControl();
     }
 
     function craterRadius(p) {
@@ -1340,11 +1362,11 @@
     }
 
     function fitCircle(points, p) {
-      const negative = points.filter(pt => pt.z < p.negativeThreshold);
-      if (negative.length < 4) return null;
+      const rim = points.filter(pt => pt.z > p.rimThreshold);
+      if (rim.length < 4) return null;
       const eps = Math.max(0.65, targetDiameter() * 0.11);
-      const labels = dbscan(negative, eps, 3);
-      const cluster = largestCluster(negative, labels);
+      const labels = dbscan(rim, eps, 3);
+      const cluster = largestCluster(rim, labels);
       if (cluster.length < 4) return null;
       return ransacCircle(cluster, p);
     }
@@ -1429,9 +1451,15 @@
 
       const inliers = new Set(fit?.inliers || []);
       for (const pt of sim.points.filter(pt => pt.z < p.negativeThreshold)) {
-        ctx.fillStyle = inliers.has(pt) ? "#ff0000" : "#111";
+        ctx.fillStyle = "#111";
         ctx.beginPath();
         ctx.arc(tx(pt.y), ty(pt.x), 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      for (const pt of sim.points.filter(pt => pt.z > p.rimThreshold)) {
+        ctx.fillStyle = inliers.has(pt) ? "#ff0000" : "#ff9d00";
+        ctx.beginPath();
+        ctx.arc(tx(pt.y), ty(pt.x), 3, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -1497,7 +1525,13 @@
 
       const inliers = new Set(fit?.inliers || []);
       for (const pt of sim.points.filter(pt => pt.profileBeam && pt.z < p.negativeThreshold)) {
-        ctx.fillStyle = inliers.has(pt) ? "#ff0000" : "#111";
+        ctx.fillStyle = "#111";
+        ctx.beginPath();
+        ctx.arc(tx(pt.y), ty(pt.z), 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      for (const pt of sim.points.filter(pt => pt.profileBeam && pt.z > p.rimThreshold)) {
+        ctx.fillStyle = inliers.has(pt) ? "#ff0000" : "#ff9d00";
         ctx.beginPath();
         ctx.arc(tx(pt.y), ty(pt.z), 5, 0, Math.PI * 2);
         ctx.fill();
@@ -1509,9 +1543,10 @@
     }
 
     function update() {
-      const p = params();
       syncTargetAgeControl();
       syncTargetDiameterControl();
+      syncRimThresholdControl();
+      const p = params();
       outputs.fieldSize.textContent = `${p.fieldSize.toFixed(0)} m`;
       outputs.minDiameter.textContent = `${formatTick(p.minDiameter, 0.5)} m`;
       outputs.maxDiameter.textContent = `${p.maxDiameter.toFixed(0)} m`;
@@ -1524,6 +1559,7 @@
       outputs.verticalFov.textContent = `${p.verticalFov.toFixed(0)}°`;
       outputs.angularResolution.textContent = `${p.angularResolution.toFixed(2)}°`;
       outputs.negativeThreshold.textContent = `${p.negativeThreshold.toFixed(2)} m`;
+      outputs.rimThreshold.textContent = `${p.rimThreshold.toFixed(2)} m`;
       outputs.craterCount.textContent = terrain ? `${craters.length} / CSFD ${terrain.csfdCount}` : "0";
       outputs.ddr.textContent = targetCrater ? `${targetCrater.degradedDiameter.toFixed(1)} m / ${targetCrater.currentDD.toFixed(3)}` : "-";
       outputs.rimHeight.textContent = targetCrater ? `${(targetCrater.ageYears / 1e6).toFixed(0)} Myr` : "-";
@@ -1537,7 +1573,8 @@
       const fit = fitCircle(sim.points, p);
       const radius = trueCraterRadius(p);
       const negativeCount = sim.points.filter(pt => pt.z < p.negativeThreshold).length;
-      const detected = negativeCount >= 4 && fit;
+      const rimCount = sim.points.filter(pt => pt.z > p.rimThreshold).length;
+      const detected = rimCount >= 4 && fit;
       let cr = 0;
       if (detected) {
         const d = Math.hypot(fit.cx - targetCrater.x, fit.cy - targetCrater.y);
@@ -1545,6 +1582,7 @@
       }
 
       outputs.pointCount.textContent = String(negativeCount);
+      outputs.rimPointCount.textContent = String(rimCount);
       outputs.dp.textContent = detected ? "100%" : "0%";
       outputs.cr.textContent = `${Math.round(Math.max(0, Math.min(1, cr)) * 100)}%`;
       outputs.fitDiameter.textContent = fit ? `${(2 * fit.r).toFixed(1)} m` : "-";
@@ -1554,7 +1592,7 @@
     }
 
     const generationControls = [controls.csfd, controls.fieldSize, controls.minDiameter, controls.maxDiameter, controls.seed, controls.maxCraterCount];
-    const lidarControls = [controls.height, controls.distance, controls.rangeNoise, controls.horizontalFov, controls.verticalFov, controls.angularResolution, controls.negativeThreshold];
+    const lidarControls = [controls.height, controls.distance, controls.rangeNoise, controls.horizontalFov, controls.verticalFov, controls.angularResolution, controls.negativeThreshold, controls.rimThreshold];
     for (const input of generationControls) {
       input.addEventListener("change", () => {
         generatePopulation(params());
@@ -1567,6 +1605,7 @@
       targetCrater.ageYears = Number(controls.targetAge.value) * 1e6;
       rebuildCraterSurface(targetCrater);
       refreshTerrainStats(params());
+      syncRimThresholdControl();
       update();
     });
     controls.targetDiameter.addEventListener("input", () => {
@@ -1672,6 +1711,7 @@
       targetCrater = selected;
       syncTargetAgeControl();
       syncTargetDiameterControl();
+      syncRimThresholdControl();
       zoom.profile = 1;
       pan.profile.y = 0;
       pan.profile.z = 0;
