@@ -106,6 +106,14 @@
       accent-color: var(--accent);
     }
 
+    select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+    }
+
     .buttons {
       display: grid;
       gap: 10px;
@@ -242,8 +250,8 @@
   <div class="app">
     <aside>
       <h1>Crater Shape Estimator</h1>
-      <p class="sub">synthterrain の FTmod_Crater + 2D線形拡散で単一クレーターを生成し、LiDAR点群の Rim / Exterior だけから拡散年代と現在内部形状を推定します。</p>
-      <p class="note">推定は methodology.md / implementation.md の Rim / Exterior profile matching: D は既知、初期 d/D は Stopar step、候補年代を総当たりし、標高オフセットを除いた重みなし二乗残差を最小化します。</p>
+      <p class="sub">synthterrain の FTmod_Crater + 2D線形拡散で単一クレーターを生成し、LiDAR点群の Rim だけから拡散年代と現在内部形状を推定します。</p>
+      <p class="note">推定は methodology.md / implementation.md の profile matching をリム近傍だけに限定した試行です。D は既知、初期 d/D は Stopar step、候補年代を総当たりし、標高オフセットを除いた重みなし二乗残差を最小化します。</p>
 
       <div class="control">
         <div class="label-row"><label for="diameter">クレーター直径 D</label><output id="diameterValue"></output></div>
@@ -276,13 +284,31 @@
       </div>
 
       <div class="control">
+        <div class="label-row"><label for="rimRangeMin">採用R下限</label><output id="rimRangeMinValue"></output></div>
+        <input id="rimRangeMin" type="range" min="0.98" max="1.5" step="0.01" value="0.98">
+      </div>
+
+      <div class="control">
+        <div class="label-row"><label for="rimRangeMax">採用R上限</label><output id="rimRangeMaxValue"></output></div>
+        <input id="rimRangeMax" type="range" min="0.98" max="1.5" step="0.01" value="1.02">
+      </div>
+
+      <div class="control">
+        <div class="label-row"><label for="normalizationMode">R正規化</label></div>
+        <select id="normalizationMode">
+          <option value="candidate">候補ごとの劣化後直径</option>
+          <option value="observed" selected>観測側の劣化後直径</option>
+        </select>
+      </div>
+
+      <div class="control">
         <div class="label-row"><label for="lidarDistance">LiDARと前方リムの距離</label><output id="lidarDistanceValue"></output></div>
         <input id="lidarDistance" type="range" min="2" max="60" step="1" value="18">
       </div>
 
       <div class="control">
         <div class="label-row"><label for="lidarHeight">LiDAR高さ</label><output id="lidarHeightValue"></output></div>
-        <input id="lidarHeight" type="range" min="0.3" max="5" step="0.1" value="1.6">
+        <input id="lidarHeight" type="range" min="0.3" max="5" step="0.1" value="0.5">
       </div>
 
       <div class="control">
@@ -297,7 +323,7 @@
 
       <div class="control">
         <div class="label-row"><label for="angularResolution">角度分解能</label><output id="angularResolutionValue"></output></div>
-        <input id="angularResolution" type="range" min="0.5" max="4" step="0.25" value="1.5">
+        <input id="angularResolution" type="range" min="0.5" max="4" step="0.25" value="1">
       </div>
 
       <div class="control">
@@ -315,8 +341,8 @@
         <div class="metric"><span>真の年代</span><strong id="metricTrueAge">-</strong></div>
         <div class="metric"><span>推定年代</span><strong id="metricEstimatedAge">-</strong></div>
         <div class="metric"><span>年代誤差</span><strong id="metricAgeError">-</strong></div>
-        <div class="metric"><span>残差平均</span><strong id="metricResidual">-</strong></div>
-        <div class="metric"><span>劣化後直径 / 点数</span><strong id="metricMatchPoints">-</strong></div>
+        <div class="metric"><span>RMSE</span><strong id="metricResidual">-</strong></div>
+        <div class="metric"><span>劣化後直径 / Rim点数</span><strong id="metricMatchPoints">-</strong></div>
         <div class="metric"><span>採用z閾値</span><strong id="metricHeightThreshold">-</strong></div>
         <div class="metric"><span>真の最大傾斜角</span><strong id="metricTrueMeanSlope">-</strong></div>
         <div class="metric"><span>推定最大傾斜角</span><strong id="metricEstimatedMeanSlope">-</strong></div>
@@ -329,7 +355,7 @@
             <h2>上面ビュー: 真のクレーターとLiDAR点群</h2>
             <div class="legend">
               <span class="swatch lidar">LiDAR点</span>
-              <span class="swatch rim">観測Rim/Exterior</span>
+              <span class="swatch rim">観測Rim</span>
             </div>
           </header>
           <canvas id="topCanvas"></canvas>
@@ -342,7 +368,7 @@
               <span class="swatch true">真値</span>
               <span class="swatch estimate">推定</span>
               <span class="swatch lidar">LiDAR/レイ</span>
-              <span class="swatch rim">観測Rim/Exterior</span>
+              <span class="swatch rim">観測Rim</span>
             </div>
           </header>
           <canvas id="profileCanvas"></canvas>
@@ -359,6 +385,9 @@
       ageCandidates: document.getElementById("ageCandidates"),
       noise: document.getElementById("noise"),
       backgroundSigma: document.getElementById("backgroundSigma"),
+      rimRangeMin: document.getElementById("rimRangeMin"),
+      rimRangeMax: document.getElementById("rimRangeMax"),
+      normalizationMode: document.getElementById("normalizationMode"),
       lidarDistance: document.getElementById("lidarDistance"),
       lidarHeight: document.getElementById("lidarHeight"),
       horizontalFov: document.getElementById("horizontalFov"),
@@ -374,6 +403,8 @@
       ageCandidates: document.getElementById("ageCandidatesValue"),
       noise: document.getElementById("noiseValue"),
       backgroundSigma: document.getElementById("backgroundSigmaValue"),
+      rimRangeMin: document.getElementById("rimRangeMinValue"),
+      rimRangeMax: document.getElementById("rimRangeMaxValue"),
       lidarDistance: document.getElementById("lidarDistanceValue"),
       lidarHeight: document.getElementById("lidarHeightValue"),
       horizontalFov: document.getElementById("horizontalFovValue"),
@@ -401,6 +432,11 @@
     let state = null;
 
     function params() {
+      let rimRangeMin = Number(controls.rimRangeMin.value);
+      let rimRangeMax = Number(controls.rimRangeMax.value);
+      if (rimRangeMin > rimRangeMax) {
+        [rimRangeMin, rimRangeMax] = [rimRangeMax, rimRangeMin];
+      }
       return {
         diameter: Number(controls.diameter.value),
         trueAgeYears: Number(controls.trueAge.value) * 1e6,
@@ -408,6 +444,9 @@
         ageCandidates: Number(controls.ageCandidates.value),
         noise: Number(controls.noise.value),
         backgroundSigma: Number(controls.backgroundSigma.value),
+        rimRangeMin,
+        rimRangeMax,
+        normalizationMode: controls.normalizationMode.value,
         lidarDistance: Number(controls.lidarDistance.value),
         lidarHeight: Number(controls.lidarHeight.value),
         horizontalFov: Number(controls.horizontalFov.value),
@@ -424,6 +463,8 @@
       outputs.ageCandidates.textContent = String(p.ageCandidates);
       outputs.noise.textContent = `${p.noise.toFixed(3)} m`;
       outputs.backgroundSigma.textContent = `${p.backgroundSigma.toFixed(0)}σ`;
+      outputs.rimRangeMin.textContent = p.rimRangeMin.toFixed(2);
+      outputs.rimRangeMax.textContent = p.rimRangeMax.toFixed(2);
       outputs.lidarDistance.textContent = `${p.lidarDistance.toFixed(0)} m`;
       outputs.lidarHeight.textContent = `${p.lidarHeight.toFixed(1)} m`;
       outputs.horizontalFov.textContent = `${p.horizontalFov.toFixed(0)}°`;
@@ -746,8 +787,8 @@
       };
     }
 
-    function rimExteriorAccepted(point, threshold) {
-      return point.radius >= 0.98 && point.radius <= 1.5 && point.z >= threshold;
+    function rimExteriorAccepted(point, threshold, p) {
+      return point.radius >= p.rimRangeMin && point.radius <= p.rimRangeMax && point.z >= threshold;
     }
 
     function observedRimExteriorProfile(points, binEdges, p) {
@@ -758,7 +799,7 @@
       const counts = new Uint32Array(binEdges.length - 1);
       const acceptedPoints = [];
       for (const point of points) {
-        if (!rimExteriorAccepted(point, threshold)) continue;
+        if (!rimExteriorAccepted(point, threshold, p)) continue;
         const bin = findBin(binEdges, point.radius);
         if (bin >= 0) {
           sums[bin] += point.z;
@@ -771,14 +812,14 @@
       for (let i = 0; i < counts.length; i++) {
         if (!counts[i]) continue;
         const r = (binEdges[i] + binEdges[i + 1]) / 2;
-        if (r < 0.98 || r > 1.5) continue;
+        if (r < p.rimRangeMin || r > p.rimRangeMax) continue;
         radius.push(r);
         elevation.push(sums[i] / counts[i]);
       }
       return { radius, elevation, counts, acceptedPoints, background, threshold };
     }
 
-    function residualObservedToModel(observed, modelProfile) {
+    function residualDiffs(observed, modelProfile) {
       const diffs = [];
       for (let i = 0; i < observed.radius.length; i++) {
         const modelZ = interpolate(modelProfile, observed.radius[i]);
@@ -786,12 +827,22 @@
           diffs.push(observed.elevation[i] - modelZ);
         }
       }
-      if (!diffs.length) return Infinity;
-      const offset = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-      return diffs.reduce((sum, diff) => sum + (diff - offset) ** 2, 0) / diffs.length;
+      return diffs;
     }
 
-    function estimateShape(p, observed, binEdges) {
+    function residualObservedToModel(observed, modelProfile) {
+      const diffs = residualDiffs(observed, modelProfile);
+      if (!diffs.length) return Infinity;
+      return diffs.reduce((sum, diff) => sum + diff ** 2, 0);
+    }
+
+    function residualRmse(observed, modelProfile) {
+      const diffs = residualDiffs(observed, modelProfile);
+      if (!diffs.length) return Infinity;
+      return Math.sqrt(diffs.reduce((sum, diff) => sum + diff ** 2, 0) / diffs.length);
+    }
+
+    function estimateShape(p, observed, binEdges, observedDegradedDiameter) {
       let best = null;
       const residuals = [];
       let totalSteps = 0;
@@ -799,11 +850,24 @@
         const ageYears = p.maxAgeYears * i / (p.ageCandidates - 1);
         const surface = buildSurface(p.diameter, ageYears);
         const degradedDiameter = degradedCraterDiameter(surface);
+        const normalizationDiameter = p.normalizationMode === "observed"
+          ? observedDegradedDiameter
+          : degradedDiameter;
         totalSteps += surface.steps;
-        const profile = radialProfile(surface, binEdges, degradedDiameter);
+        const profile = radialProfile(surface, binEdges, normalizationDiameter);
         const residual = residualObservedToModel(observed, profile);
         residuals.push({ ageYears, residual });
-        if (!best || residual < best.residual) best = { ageYears, residual, surface, profile, degradedDiameter, index: i };
+        if (!best || residual < best.residual) {
+          best = {
+            ageYears,
+            residual,
+            surface,
+            profile,
+            degradedDiameter,
+            normalizationDiameter,
+            index: i
+          };
+        }
       }
       best.residuals = residuals;
       best.totalSteps = totalSteps;
@@ -826,6 +890,23 @@
       const center = (min + max) / 2;
       const half = (max - min) / (2 * factor);
       return [center - half, center + half];
+    }
+
+    function equalScaleRanges(xMin, xMax, yMin, yMax, drawableWidth, drawableHeight, zoomFactor, panX, panY) {
+      const baseXSpan = Math.max(1e-6, xMax - xMin);
+      const baseYSpan = Math.max(1e-6, yMax - yMin);
+      const pixelsPerMeter = Math.min(drawableWidth / baseXSpan, drawableHeight / baseYSpan) * zoomFactor;
+      const xSpan = drawableWidth / Math.max(1e-6, pixelsPerMeter);
+      const ySpan = drawableHeight / Math.max(1e-6, pixelsPerMeter);
+      const xCenter = (xMin + xMax) / 2 + panX;
+      const yCenter = (yMin + yMax) / 2 + panY;
+      return {
+        xMin: xCenter - xSpan / 2,
+        xMax: xCenter + xSpan / 2,
+        yMin: yCenter - ySpan / 2,
+        yMax: yCenter + ySpan / 2,
+        pixelsPerMeter
+      };
     }
 
     function niceStep(span, targetTicks = 7) {
@@ -984,7 +1065,7 @@
       ctx.globalAlpha = 1;
 
       for (const point of points) {
-        const match = rimExteriorAccepted(point, observed.threshold);
+        const match = rimExteriorAccepted(point, observed.threshold, p);
         ctx.fillStyle = match ? "#ff9d00" : "#1f5fbf";
         ctx.beginPath();
         ctx.arc(tx(point.x), ty(point.y), match ? 3.4 : 2.4, 0, Math.PI * 2);
@@ -1077,12 +1158,12 @@
       const allZ = baseTrueSec.z.concat(baseEstSec.z).concat(points.map(point => point.z));
       const baseZMin = Math.min(...allZ, -0.5) - 0.08 * p.diameter / 10;
       const baseZMax = Math.max(...allZ, p.lidarHeight) + 0.08 * p.diameter / 10;
-      const [xRangeMin, xRangeMax] = zoomedRange(baseXMin, baseXMax, zoom.profile);
-      const [zRangeMin, zRangeMax] = zoomedRange(baseZMin, baseZMax, zoom.profile);
-      const xMin = xRangeMin + pan.profile.x;
-      const xMax = xRangeMax + pan.profile.x;
-      const zMin = zRangeMin + pan.profile.z;
-      const zMax = zRangeMax + pan.profile.z;
+      const profileRange = equalScaleRanges(
+        baseXMin, baseXMax, baseZMin, baseZMax,
+        width - margin * 2, height - margin * 2,
+        zoom.profile, pan.profile.x, pan.profile.z
+      );
+      const { xMin, xMax, yMin: zMin, yMax: zMax } = profileRange;
       const trueSec = profileSection(trueSurface, xMin, xMax);
       const estSec = profileSection(estimate.surface, xMin, xMax);
 
@@ -1131,10 +1212,10 @@
 
       for (const point of points) {
         if (!point.profileBeam) continue;
-        const match = rimExteriorAccepted(point, observed.threshold);
+        const match = rimExteriorAccepted(point, observed.threshold, p);
         ctx.fillStyle = match ? "#ff9d00" : "#1f5fbf";
         ctx.beginPath();
-        ctx.arc(tx(point.x), ty(point.z), 3, 0, Math.PI * 2);
+        ctx.arc(tx(point.x), ty(point.z), 6, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.fillStyle = "#1f5fbf";
@@ -1157,7 +1238,8 @@
       const trueSurface = buildSurface(p.diameter, p.trueAgeYears);
       const sim = simulateLidarObservation(trueSurface, p);
       const observed = observedRimExteriorProfile(sim.points, binEdges, p);
-      const estimate = estimateShape(p, observed, binEdges);
+      const estimate = estimateShape(p, observed, binEdges, sim.degradedDiameter);
+      const rmse = residualRmse(observed, estimate.profile);
       const trueSlopeStats = surfaceSlopeStats(trueSurface);
       const estimatedSlopeStats = surfaceSlopeStats(estimate.surface);
       state = { p, trueSurface, sim, observed, estimate };
@@ -1165,7 +1247,7 @@
       outputs.metricTrueAge.textContent = `${(p.trueAgeYears / 1e6).toFixed(0)} Myr`;
       outputs.metricEstimatedAge.textContent = `${(estimate.ageYears / 1e6).toFixed(0)} Myr`;
       outputs.metricAgeError.textContent = `${((estimate.ageYears - p.trueAgeYears) / 1e6).toFixed(0)} Myr`;
-      outputs.metricResidual.textContent = Number.isFinite(estimate.residual) ? estimate.residual.toExponential(2) : "-";
+      outputs.metricResidual.textContent = Number.isFinite(rmse) ? `${rmse.toExponential(2)} m` : "-";
       outputs.metricMatchPoints.textContent = `${sim.degradedDiameter.toFixed(1)} m / ${observed.acceptedPoints.length}`;
       outputs.metricHeightThreshold.textContent = `${observed.threshold.toFixed(3)} m`;
       outputs.metricTrueMeanSlope.textContent = `${trueSlopeStats.max.toFixed(1)}°`;
@@ -1256,10 +1338,9 @@
         .concat(state.sim.points.map(point => point.z));
       const baseZMin = Math.min(...allZ, -0.5) - 0.08 * p.diameter / 10;
       const baseZMax = Math.max(...allZ, p.lidarHeight) + 0.08 * p.diameter / 10;
-      const [xMin, xMax] = zoomedRange(baseXMin, baseXMax, zoom.profile);
-      const [zMin, zMax] = zoomedRange(baseZMin, baseZMax, zoom.profile);
-      pan.profile.x -= dx * (xMax - xMin) / drawableWidth;
-      pan.profile.z += dy * (zMax - zMin) / drawableHeight;
+      const profileRange = equalScaleRanges(baseXMin, baseXMax, baseZMin, baseZMax, drawableWidth, drawableHeight, zoom.profile, 0, 0);
+      pan.profile.x -= dx / profileRange.pixelsPerMeter;
+      pan.profile.z += dy / profileRange.pixelsPerMeter;
     }
 
     document.getElementById("run").addEventListener("click", run);
