@@ -315,9 +315,11 @@
         <div class="metric"><span>真の年代</span><strong id="metricTrueAge">-</strong></div>
         <div class="metric"><span>推定年代</span><strong id="metricEstimatedAge">-</strong></div>
         <div class="metric"><span>年代誤差</span><strong id="metricAgeError">-</strong></div>
-        <div class="metric"><span>最小残差</span><strong id="metricResidual">-</strong></div>
+        <div class="metric"><span>残差平均</span><strong id="metricResidual">-</strong></div>
         <div class="metric"><span>劣化後直径 / 点数</span><strong id="metricMatchPoints">-</strong></div>
         <div class="metric"><span>採用z閾値</span><strong id="metricHeightThreshold">-</strong></div>
+        <div class="metric"><span>真の最大傾斜角</span><strong id="metricTrueMeanSlope">-</strong></div>
+        <div class="metric"><span>推定最大傾斜角</span><strong id="metricEstimatedMeanSlope">-</strong></div>
         <div class="metric"><span>総拡散ステップ</span><strong id="metricSteps">-</strong></div>
       </section>
 
@@ -384,6 +386,8 @@
       metricResidual: document.getElementById("metricResidual"),
       metricMatchPoints: document.getElementById("metricMatchPoints"),
       metricHeightThreshold: document.getElementById("metricHeightThreshold"),
+      metricTrueMeanSlope: document.getElementById("metricTrueMeanSlope"),
+      metricEstimatedMeanSlope: document.getElementById("metricEstimatedMeanSlope"),
       metricSteps: document.getElementById("metricSteps")
     };
 
@@ -544,6 +548,28 @@
         }
       }
       return 2 * bestRadius;
+    }
+
+    function surfaceSlopeStats(surface) {
+      const spacing = 4 * surface.diameter / (surface.n - 1);
+      let maxSlope = 0;
+      let sumSlope = 0;
+      let count = 0;
+      for (let row = 1; row < surface.n - 1; row++) {
+        for (let col = 1; col < surface.n - 1; col++) {
+          const i = row * surface.n + col;
+          const dzdx = (surface.values[i + 1] - surface.values[i - 1]) / (2 * spacing);
+          const dzdy = (surface.values[i + surface.n] - surface.values[i - surface.n]) / (2 * spacing);
+          const slope = Math.atan(Math.hypot(dzdx, dzdy)) * 180 / Math.PI;
+          maxSlope = Math.max(maxSlope, slope);
+          sumSlope += slope;
+          count++;
+        }
+      }
+      return {
+        max: maxSlope,
+        mean: count ? sumSlope / count : 0
+      };
     }
 
     function radialProfile(surface, binEdges, rimDiameter = surface.diameter) {
@@ -762,7 +788,7 @@
       }
       if (!diffs.length) return Infinity;
       const offset = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-      return diffs.reduce((sum, diff) => sum + (diff - offset) ** 2, 0);
+      return diffs.reduce((sum, diff) => sum + (diff - offset) ** 2, 0) / diffs.length;
     }
 
     function estimateShape(p, observed, binEdges) {
@@ -1132,6 +1158,8 @@
       const sim = simulateLidarObservation(trueSurface, p);
       const observed = observedRimExteriorProfile(sim.points, binEdges, p);
       const estimate = estimateShape(p, observed, binEdges);
+      const trueSlopeStats = surfaceSlopeStats(trueSurface);
+      const estimatedSlopeStats = surfaceSlopeStats(estimate.surface);
       state = { p, trueSurface, sim, observed, estimate };
 
       outputs.metricTrueAge.textContent = `${(p.trueAgeYears / 1e6).toFixed(0)} Myr`;
@@ -1140,6 +1168,8 @@
       outputs.metricResidual.textContent = Number.isFinite(estimate.residual) ? estimate.residual.toExponential(2) : "-";
       outputs.metricMatchPoints.textContent = `${sim.degradedDiameter.toFixed(1)} m / ${observed.acceptedPoints.length}`;
       outputs.metricHeightThreshold.textContent = `${observed.threshold.toFixed(3)} m`;
+      outputs.metricTrueMeanSlope.textContent = `${trueSlopeStats.max.toFixed(1)}°`;
+      outputs.metricEstimatedMeanSlope.textContent = `${estimatedSlopeStats.max.toFixed(1)}°`;
       outputs.metricSteps.textContent = String(estimate.totalSteps + trueSurface.steps);
 
       drawTop();
