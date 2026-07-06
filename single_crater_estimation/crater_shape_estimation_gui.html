@@ -259,12 +259,39 @@
       </div>
 
       <div class="control">
-        <div class="label-row"><label for="trueAge">真の劣化年代</label><output id="trueAgeValue"></output></div>
+        <div class="label-row"><label for="trueAgeMode">真の劣化年代</label><output id="trueAgeValue"></output></div>
+        <select id="trueAgeMode">
+          <option value="uniform" selected>Uniform(0, equilibrium age)</option>
+          <option value="fraction">equilibrium age の割合</option>
+          <option value="years">年数を直接指定</option>
+        </select>
+      </div>
+
+      <div class="control">
+        <div class="label-row"><label for="trueAge">真の年代を直接指定</label><output id="trueAgeYearsValue"></output></div>
         <input id="trueAge" type="range" min="0" max="500" step="2" value="120">
       </div>
 
       <div class="control">
-        <div class="label-row"><label for="maxAge">推定探索上限</label><output id="maxAgeValue"></output></div>
+        <div class="label-row"><label for="trueAgeFraction">真の年代割合</label><output id="trueAgeFractionValue"></output></div>
+        <input id="trueAgeFraction" type="range" min="0" max="1" step="0.001" value="0.1">
+      </div>
+
+      <div class="control">
+        <div class="label-row"><label for="trueAgeSeed">真の年代seed</label><output id="trueAgeSeedValue"></output></div>
+        <input id="trueAgeSeed" type="range" min="1" max="999" step="1" value="3">
+      </div>
+
+      <div class="control">
+        <div class="label-row"><label for="maxAgeMode">推定探索上限</label><output id="maxAgeValue"></output></div>
+        <select id="maxAgeMode">
+          <option value="equilibrium" selected>equilibrium age</option>
+          <option value="years">年数を直接指定</option>
+        </select>
+      </div>
+
+      <div class="control">
+        <div class="label-row"><label for="maxAge">探索上限を直接指定</label><output id="maxAgeYearsValue"></output></div>
         <input id="maxAge" type="range" min="20" max="800" step="10" value="300">
       </div>
 
@@ -380,7 +407,11 @@
   <script>
     const controls = {
       diameter: document.getElementById("diameter"),
+      trueAgeMode: document.getElementById("trueAgeMode"),
       trueAge: document.getElementById("trueAge"),
+      trueAgeFraction: document.getElementById("trueAgeFraction"),
+      trueAgeSeed: document.getElementById("trueAgeSeed"),
+      maxAgeMode: document.getElementById("maxAgeMode"),
       maxAge: document.getElementById("maxAge"),
       ageCandidates: document.getElementById("ageCandidates"),
       noise: document.getElementById("noise"),
@@ -399,7 +430,11 @@
     const outputs = {
       diameter: document.getElementById("diameterValue"),
       trueAge: document.getElementById("trueAgeValue"),
+      trueAgeYears: document.getElementById("trueAgeYearsValue"),
+      trueAgeFraction: document.getElementById("trueAgeFractionValue"),
+      trueAgeSeed: document.getElementById("trueAgeSeedValue"),
       maxAge: document.getElementById("maxAgeValue"),
+      maxAgeYears: document.getElementById("maxAgeYearsValue"),
       ageCandidates: document.getElementById("ageCandidatesValue"),
       noise: document.getElementById("noiseValue"),
       backgroundSigma: document.getElementById("backgroundSigmaValue"),
@@ -426,10 +461,52 @@
     const profileCanvas = document.getElementById("profileCanvas");
     const rimHeightRatio = 0.036822095;
     const gridSize = 81;
+    const npfCoefficients = [
+      -3.076756,
+      -3.557528,
+      0.781027,
+      1.021521,
+      -0.156012,
+      -0.444058,
+      0.019977,
+      0.086850,
+      -0.005874,
+      -0.006809,
+      8.25e-04,
+      5.54e-05
+    ];
     const zoom = { top: 1, profile: 1 };
     const pan = { top: { x: 0, y: 0 }, profile: { x: 0, z: 0 } };
     let drag = null;
     let state = null;
+
+    function viperEnvSpecCsfd(diameter) {
+      if (diameter <= 80) return 29174 * diameter ** -1.92 / 1e6;
+      return 156228 * diameter ** -2.389 / 1e6;
+    }
+
+    function npfCsfd(diameter) {
+      const logDKm = Math.log10(diameter / 1000);
+      let poly = 0;
+      let power = 1;
+      for (const coefficient of npfCoefficients) {
+        poly += coefficient * power;
+        power *= logDKm;
+      }
+      return 10 ** poly / 1e6;
+    }
+
+    function synthterrainEquilibriumAgeYears(diameter) {
+      const upperDiameter = 10 ** (Math.log10(diameter) + 0.1);
+      const eq = viperEnvSpecCsfd(diameter) - viperEnvSpecCsfd(upperDiameter);
+      const pf = npfCsfd(diameter) - npfCsfd(upperDiameter);
+      return 1e9 * eq / pf;
+    }
+
+    function trueAgeUniformFraction(seed) {
+      if (seed === 3) return 0.08564916714362436;
+      return mulberry32(seed)();
+    }
 
     function params() {
       let rimRangeMin = Number(controls.rimRangeMin.value);
@@ -437,10 +514,31 @@
       if (rimRangeMin > rimRangeMax) {
         [rimRangeMin, rimRangeMax] = [rimRangeMax, rimRangeMin];
       }
+      const diameter = Number(controls.diameter.value);
+      const equilibriumAgeYears = synthterrainEquilibriumAgeYears(diameter);
+      const trueAgeMode = controls.trueAgeMode.value;
+      let trueAgeYears;
+      if (trueAgeMode === "years") {
+        trueAgeYears = Number(controls.trueAge.value) * 1e6;
+      } else if (trueAgeMode === "fraction") {
+        trueAgeYears = Number(controls.trueAgeFraction.value) * equilibriumAgeYears;
+      } else {
+        trueAgeYears = trueAgeUniformFraction(Number(controls.trueAgeSeed.value)) * equilibriumAgeYears;
+      }
+      trueAgeYears = Math.max(0, Math.min(trueAgeYears, equilibriumAgeYears));
+      const maxAgeMode = controls.maxAgeMode.value;
+      const maxAgeYears = maxAgeMode === "equilibrium"
+        ? equilibriumAgeYears
+        : Number(controls.maxAge.value) * 1e6;
       return {
-        diameter: Number(controls.diameter.value),
-        trueAgeYears: Number(controls.trueAge.value) * 1e6,
-        maxAgeYears: Number(controls.maxAge.value) * 1e6,
+        diameter,
+        trueAgeMode,
+        trueAgeYears,
+        trueAgeFraction: Number(controls.trueAgeFraction.value),
+        trueAgeSeed: Number(controls.trueAgeSeed.value),
+        equilibriumAgeYears,
+        maxAgeMode,
+        maxAgeYears,
         ageCandidates: Number(controls.ageCandidates.value),
         noise: Number(controls.noise.value),
         backgroundSigma: Number(controls.backgroundSigma.value),
@@ -458,8 +556,21 @@
 
     function syncLabels(p) {
       outputs.diameter.textContent = `${p.diameter.toFixed(0)} m`;
-      outputs.trueAge.textContent = `${(p.trueAgeYears / 1e6).toFixed(0)} Myr`;
-      outputs.maxAge.textContent = `${(p.maxAgeYears / 1e6).toFixed(0)} Myr`;
+      const modeLabel = p.trueAgeMode === "years"
+        ? "direct"
+        : p.trueAgeMode === "fraction"
+          ? "fraction"
+          : "uniform";
+      outputs.trueAge.textContent = `${(p.trueAgeYears / 1e6).toFixed(1)} Myr (${modeLabel}, eq ${(p.equilibriumAgeYears / 1e6).toFixed(1)} Myr)`;
+      outputs.trueAgeYears.textContent = `${Number(controls.trueAge.value).toFixed(0)} Myr`;
+      outputs.trueAgeFraction.textContent = p.trueAgeFraction.toFixed(3);
+      outputs.trueAgeSeed.textContent = String(p.trueAgeSeed);
+      controls.trueAge.disabled = p.trueAgeMode !== "years";
+      controls.trueAgeFraction.disabled = p.trueAgeMode !== "fraction";
+      controls.trueAgeSeed.disabled = p.trueAgeMode !== "uniform";
+      outputs.maxAge.textContent = `${(p.maxAgeYears / 1e6).toFixed(1)} Myr (${p.maxAgeMode === "equilibrium" ? "equilibrium" : "direct"})`;
+      outputs.maxAgeYears.textContent = `${Number(controls.maxAge.value).toFixed(0)} Myr`;
+      controls.maxAge.disabled = p.maxAgeMode !== "years";
       outputs.ageCandidates.textContent = String(p.ageCandidates);
       outputs.noise.textContent = `${p.noise.toFixed(3)} m`;
       outputs.backgroundSigma.textContent = `${p.backgroundSigma.toFixed(0)}σ`;
@@ -1247,10 +1358,6 @@
 
     function run() {
       const p = params();
-      if (p.trueAgeYears > p.maxAgeYears) {
-        p.trueAgeYears = p.maxAgeYears;
-        controls.trueAge.value = String(Math.round(p.maxAgeYears / 1e6));
-      }
       syncLabels(p);
       const binEdges = Array.from({ length: 76 }, (_, i) => i * 1.5 / 75);
       const trueSurface = buildSurfaceForDegradedDiameter(p.diameter, p.trueAgeYears);
