@@ -254,7 +254,7 @@
       <p class="note">推定は methodology.md / implementation.md の profile matching をリム近傍だけに限定した試行です。D は既知、初期 d/D は Stopar step、候補年代を総当たりし、標高オフセットを除いた重みなし二乗残差を最小化します。</p>
 
       <div class="control">
-        <div class="label-row"><label for="diameter">クレーター直径 D</label><output id="diameterValue"></output></div>
+        <div class="label-row"><label for="diameter">劣化後クレーター直径 D</label><output id="diameterValue"></output></div>
         <input id="diameter" type="range" min="5" max="80" step="1" value="20">
       </div>
 
@@ -591,6 +591,24 @@
       return 2 * bestRadius;
     }
 
+    function buildSurfaceForDegradedDiameter(targetDegradedDiameter, ageYears) {
+      let generatedDiameter = targetDegradedDiameter;
+      let surface = null;
+      let degradedDiameter = targetDegradedDiameter;
+      for (let i = 0; i < 3; i++) {
+        surface = buildSurface(generatedDiameter, ageYears);
+        degradedDiameter = degradedCraterDiameter(surface);
+        if (!Number.isFinite(degradedDiameter) || degradedDiameter <= 0) break;
+        generatedDiameter *= targetDegradedDiameter / degradedDiameter;
+      }
+      surface = buildSurface(generatedDiameter, ageYears);
+      degradedDiameter = degradedCraterDiameter(surface);
+      surface.generatedDiameter = generatedDiameter;
+      surface.targetDegradedDiameter = targetDegradedDiameter;
+      surface.degradedDiameter = degradedDiameter;
+      return surface;
+    }
+
     function surfaceSlopeStats(surface) {
       const spacing = 4 * surface.diameter / (surface.n - 1);
       let maxSlope = 0;
@@ -616,7 +634,7 @@
     function radialProfile(surface, binEdges, rimDiameter = surface.diameter) {
       const sums = new Float64Array(binEdges.length - 1);
       const counts = new Uint32Array(binEdges.length - 1);
-      const radiusScale = surface.diameter / rimDiameter;
+      const radiusScale = 2 * surface.diameter / rimDiameter;
       for (let row = 0; row < surface.n; row++) {
         const yFraction = -2 + 4 * row / (surface.n - 1);
         for (let col = 0; col < surface.n; col++) {
@@ -848,8 +866,8 @@
       let totalSteps = 0;
       for (let i = 0; i < p.ageCandidates; i++) {
         const ageYears = p.maxAgeYears * i / (p.ageCandidates - 1);
-        const surface = buildSurface(p.diameter, ageYears);
-        const degradedDiameter = degradedCraterDiameter(surface);
+        const surface = buildSurfaceForDegradedDiameter(p.diameter, ageYears);
+        const degradedDiameter = surface.degradedDiameter;
         const normalizationDiameter = p.normalizationMode === "observed"
           ? observedDegradedDiameter
           : degradedDiameter;
@@ -1235,7 +1253,7 @@
       }
       syncLabels(p);
       const binEdges = Array.from({ length: 76 }, (_, i) => i * 1.5 / 75);
-      const trueSurface = buildSurface(p.diameter, p.trueAgeYears);
+      const trueSurface = buildSurfaceForDegradedDiameter(p.diameter, p.trueAgeYears);
       const sim = simulateLidarObservation(trueSurface, p);
       const observed = observedRimExteriorProfile(sim.points, binEdges, p);
       const estimate = estimateShape(p, observed, binEdges, sim.degradedDiameter);
