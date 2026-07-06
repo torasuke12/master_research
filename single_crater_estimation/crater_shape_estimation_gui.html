@@ -379,8 +379,10 @@
       <section class="views">
         <div class="view">
           <header>
-            <h2>上面ビュー: 真のクレーターとLiDAR点群</h2>
+            <h2>上面ビュー: 真値・推定リムとLiDAR点群</h2>
             <div class="legend">
+              <span class="swatch true">真値</span>
+              <span class="swatch estimate">推定</span>
               <span class="swatch lidar">LiDAR点</span>
               <span class="swatch rim">観測Rim</span>
             </div>
@@ -1105,24 +1107,18 @@
       return `rgb(${c[0]},${c[1]},${c[2]})`;
     }
 
-    function surfaceMinMax(surface) {
-      let min = Infinity;
-      let max = -Infinity;
-      for (const value of surface.values) {
-        min = Math.min(min, value);
-        max = Math.max(max, value);
-      }
-      return { min, max };
-    }
-
     function drawTop() {
-      const { p, trueSurface, sim, observed } = state;
+      const { p, trueSurface, sim, observed, estimate } = state;
       const { points, rays, sensor, degradedDiameter } = sim;
       const canvas = topCanvas;
       const { width, height } = resizeCanvas(canvas);
       const ctx = canvas.getContext("2d");
       const margin = 48;
-      const viewDiameter = Math.max(p.diameter, degradedDiameter);
+      const viewDiameter = Math.max(
+        p.diameter,
+        degradedDiameter,
+        estimate ? estimate.degradedDiameter : 0
+      );
       const baseXMin = sensor.x - viewDiameter * 0.18;
       const baseXMax = viewDiameter * 1.15;
       const baseYMin = -viewDiameter;
@@ -1182,6 +1178,17 @@
       ctx.arc(tx(0), ty(0), degradedDiameter / 2 * scale, 0, Math.PI * 2);
       ctx.stroke();
 
+      if (estimate) {
+        ctx.save();
+        ctx.strokeStyle = "#d43b25";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 6]);
+        ctx.beginPath();
+        ctx.arc(tx(0), ty(0), estimate.degradedDiameter / 2 * scale, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
       ctx.strokeStyle = "#1f5fbf";
       ctx.globalAlpha = 0.25;
       ctx.lineWidth = 1;
@@ -1215,7 +1222,7 @@
       ctx.fillStyle = "#202522";
       ctx.font = "14px system-ui";
       ctx.textAlign = "center";
-      ctx.fillText("x-y LiDAR point cloud and degraded true rim", width / 2, height - 12);
+      ctx.fillText("x-y LiDAR point cloud with true and estimated crater rims", width / 2, height - 12);
     }
 
     function profileSection(surface, xMin, xMax, samples = 320) {
@@ -1443,7 +1450,11 @@
       const drawableHeight = Math.max(1, rect.height - marginCss * 2);
 
       if (name === "top") {
-        const viewDiameter = Math.max(p.diameter, state.sim.degradedDiameter);
+        const viewDiameter = Math.max(
+          p.diameter,
+          state.sim.degradedDiameter,
+          state.estimate ? state.estimate.degradedDiameter : 0
+        );
         const baseXMin = sensor.x - viewDiameter * 0.18;
         const baseXMax = viewDiameter * 1.15;
         const baseYMin = -viewDiameter;
